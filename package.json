@@ -1,0 +1,12 @@
+{
+  "name": "xbom-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atendimento por IA do X-Bom Lanches — camada separada do site. Grava pedidos via /api/orders do backend existente.",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}
