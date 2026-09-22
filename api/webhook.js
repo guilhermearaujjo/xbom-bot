@@ -98,7 +98,11 @@ async function responder(telefone, respostas, qrPix) {
 }
 
 // -----------------------------------------------------------------------------
-module.exports = async (req, res) => {
+// O tratamento em si. Dois caminhos chamam esta função:
+//   /api/webhook?k=SEGREDO        (query, cabeçalho x-webhook-key ou apikey)
+//   /api/webhook/SEGREDO          (segredo no caminho — à prova de query cortada)
+// -----------------------------------------------------------------------------
+async function tratar(req, res, segredoRecebido) {
   // A Evolution reenvia quando demoramos a responder, então respondemos rápido
   // e nunca devolvemos erro por conta de mensagem que não interessa.
   if (req.method === "GET") {
@@ -113,9 +117,9 @@ module.exports = async (req, res) => {
   }
 
   // Trava simples: a Evolution não assina os webhooks, então usamos um segredo
-  // na própria URL (?k=...). Sem isso, quem descobrir a URL fala com o bot.
+  // nosso. Sem isso, quem descobrir a URL fala com o bot.
   const segredo = process.env.WEBHOOK_SECRET;
-  if (segredo && req.query?.k !== segredo) {
+  if (segredo && segredoRecebido !== segredo) {
     return res.status(401).json({ ok: false, erro: "não autorizado" });
   }
 
@@ -192,4 +196,14 @@ module.exports = async (req, res) => {
     // 200 de propósito: erro nosso não deve fazer a Evolution ficar reenviando
     return res.status(200).json({ ok: false, erro: err.message || String(err) });
   }
-};
+}
+
+// Rota /api/webhook — segredo por query (?k=) ou cabeçalho
+module.exports = async (req, res) =>
+  tratar(
+    req,
+    res,
+    req.query?.k || req.headers["x-webhook-key"] || req.headers["apikey"]
+  );
+
+module.exports.tratar = tratar;
