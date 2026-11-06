@@ -24,6 +24,7 @@ const {
   configurada
 } = require("../lib/evolution");
 const { transcrever } = require("../lib/audio");
+const { registrarContatoAna, marcarOptOut, textoEhParar } = require("../lib/contatos");
 
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -142,6 +143,14 @@ async function tratar(req, res, segredoRecebido) {
       return res.status(200).json({ ok: true, ignorado: "duplicada" });
     }
 
+    // Quem escreve para a Ana vira contato (base dos disparos de mensagem).
+    // Se falhar, o atendimento segue normalmente.
+    try {
+      await registrarContatoAna(info.telefone, info.nomePerfil);
+    } catch (e) {
+      console.error("[webhook] falha ao registrar contato:", e.message);
+    }
+
     // ---- texto ou áudio ----
     let texto = textoDaMensagem(info.mensagem).trim();
 
@@ -172,6 +181,16 @@ async function tratar(req, res, segredoRecebido) {
         "Consigo atender por texto ou áudio 🙂 Me conta por aqui o que você vai querer."
       );
       return res.status(200).json({ ok: true, ignorado: "sem texto" });
+    }
+
+    // ---- PARAR: sai da lista de disparos e a Ana não responde mais nada ----
+    if (textoEhParar(texto)) {
+      await marcarOptOut(info.telefone, true);
+      await enviarTexto(
+        info.telefone,
+        "Pronto! Você não vai mais receber nossas mensagens. Se quiser pedir, é só chamar por aqui 🙂"
+      );
+      return res.status(200).json({ ok: true, acao: "optout" });
     }
 
     // ---- o cérebro, o mesmo do chat de teste ----
