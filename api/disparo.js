@@ -5,9 +5,9 @@
 //
 //   GET  /api/disparo                    -> disparo atual, últimos disparos, limites
 //   POST /api/disparo  { acao: ... }
-//        teste    { texto, numero, nome }
-//        salvar_mensagem { texto }          (mensagem pronta do painel)
-//        criar    { texto, origens: ["ana","manual","csv","pedido_site"] }
+//        teste    { texto, numero, nome, imagem? }
+//        salvar_mensagem { texto, imagem? } (mensagem pronta do painel)
+//        criar    { texto, imagem?, origens: ["ana","manual","csv","pedido_site"] }
 //        pausar   { id }
 //        retomar  { id }
 //        cancelar { id }
@@ -17,7 +17,7 @@
 // -----------------------------------------------------------------------------
 
 const { db, admin } = require("../lib/firebase");
-const { enviarTexto, mostrarDigitando, configurada } = require("../lib/evolution");
+const { enviarTexto, enviarImagemUrl, mostrarDigitando, configurada } = require("../lib/evolution");
 const {
   COLECAO,
   CONFIG_ENVIO,
@@ -36,6 +36,31 @@ const ABERTOS = ["preparando", "ativo", "pausado"];
 // Quem recebeu um disparo há menos de X dias fica fora do próximo (0 desliga)
 const DIAS_SEM_REPETIR = Number(process.env.DISPARO_DIAS_SEM_REPETIR ?? 7);
 
+// A imagem fica no Hostinger do xbom.com.br (o painel envia o arquivo para lá).
+// Só aceitamos endereço https desses sites, para ninguém mandar a Evolution baixar coisa de fora.
+const HOSTS_IMAGEM = (process.env.DISPARO_IMG_HOSTS || "xbom.com.br,www.xbom.com.br")
+  .split(",")
+  .map((h) => h.trim().toLowerCase())
+  .filter(Boolean);
+
+function validarImagem(entrada) {
+  const u = String(entrada || "").trim();
+  if (!u) return { imagem: "" };
+  let url;
+  try {
+    url = new URL(u);
+  } catch (_) {
+    return { erro: "Endereço da imagem inválido." };
+  }
+  if (url.protocol !== "https:" || !HOSTS_IMAGEM.includes(url.hostname.toLowerCase())) {
+    return { erro: "A imagem precisa estar no xbom.com.br (envie pelo painel)." };
+  }
+  if (!/\.(jpe?g|png|webp)$/i.test(url.pathname)) {
+    return { erro: "A imagem precisa ser JPG, PNG ou WebP." };
+  }
+  return { imagem: url.href };
+}
+
 function autorizado(req) {
   const chave = process.env.BOT_ADMIN_KEY;
   return !!chave && req.headers["x-bot-key"] === chave;
@@ -52,6 +77,7 @@ function resumo(s) {
   return {
     id: s.id,
     texto: d.texto || "",
+    imagem: d.imagem || "",
     status: d.status || "",
     origens: d.origens || [],
     total: d.total || 0,
@@ -107,6 +133,7 @@ module.exports = async (req, res) => {
         dentroJanela: dentroDaJanela(agora.minutos),
         evolution: configurada(),
         mensagemPadrao: padrao.exists ? (padrao.data() || {}).mensagemPadrao || "" : "",
+        imagemPadrao: padrao.exists ? (padrao.data() || {}).imagemPadrao || "" : "",
         diasSemRepetir: DIAS_SEM_REPETIR
       });
     }
@@ -121,10 +148,15 @@ module.exports = async (req, res) => {
     if (body.acao === "salvar_mensagem") {
       const v = validarTexto(body.texto);
       if (v.erro) return res.status(400).json({ ok: false, erro: v.erro });
+      const im = validarImagem(body.imagem);
+      if (im.erro) return res.status(400).json({ ok: false, erro: im.erro });
       await db
         .collection("bot_config")
         .doc("disparo")
-        .set({ mensagemPadrao: v.texto, atualizadoEm: FV.serverTimestamp() }, { merge: true });
+        .set(
+          { mensagemPadrao: v.texto, imagemPadrao: im.imagem, atualizadoEm: FV.serverTimestamp() },
+          { merge: true }
+        );
       return res.status(200).json({ ok: true });
     }
 
@@ -137,6 +169,8 @@ module.exports = async (req, res) => {
       if (!p.ok) {
         return res.status(400).json({ ok: false, erro: `Número de teste inválido (${p.motivo}).` });
       }
+      const im = validarImagem(body.imagem);
+      if (im.erro) return res.status(400).json({ ok: false, erro: im.erro });
       if (!configurada()) {
         return res.status(500).json({ ok: false, erro: "Evolution não configurada na Vercel." });
       }
@@ -144,7 +178,9 @@ module.exports = async (req, res) => {
       const texto = comRodape(montarTexto(v.texto, body.nome));
       await mostrarDigitando(p.numero, 1200).catch(() => {});
       await espera(900);
-      const r = await enviarTexto(p.numero, texto);
+      const r = im.imagem
+        ? await enviarImagemUrl(p.numero, im.imagem, texto)
+        : await enviarTexto(p.numero, texto);
       if (!r.ok) {
         return res.status(502).json({
           ok: false,
@@ -158,6 +194,9 @@ module.exports = async (req, res) => {
     if (body.acao === "criar") {
       const v = validarTexto(body.texto);
       if (v.erro) return res.status(400).json({ ok: false, erro: v.erro });
+
+      const im = validarImagem(body.imagem);
+      if (im.erro) return res.status(400).json({ ok: false, erro: im.erro });
 
       const origens = (Array.isArray(body.origens) ? body.origens : []).filter((o) =>
         ORIGENS_VALIDAS.includes(o)
@@ -228,6 +267,7 @@ module.exports = async (req, res) => {
       const ref = db.collection("disparos").doc();
       await ref.set({
         texto: v.texto,
+        imagem: im.imagem,
         origens,
         status: "preparando",
         total: numeros.length,

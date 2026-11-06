@@ -17,7 +17,7 @@
 // -----------------------------------------------------------------------------
 
 const { db, admin } = require("../lib/firebase");
-const { enviarTexto, mostrarDigitando, configurada } = require("../lib/evolution");
+const { enviarTexto, enviarImagemUrl, mostrarDigitando, configurada } = require("../lib/evolution");
 const {
   COLECAO,
   CONFIG_ENVIO,
@@ -95,7 +95,9 @@ async function rodar() {
 
     await mostrarDigitando(destino, 1500).catch(() => {});
     await espera(1500 + Math.random() * 2500);
-    const r = await enviarTexto(destino, texto);
+    const r = disparo.imagem
+      ? await enviarImagemUrl(destino, disparo.imagem, texto)
+      : await enviarTexto(destino, texto);
 
     // ---- deu certo ----
     if (r.ok) {
